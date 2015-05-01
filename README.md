@@ -4,7 +4,7 @@
     specification     n/a    
     documentation     n/a
 
-#Go☠Bikini
+#Go⚛Bikini
 
 Ad-hoc tests of Go [sync/atomic](https://golang.org/pkg/sync/atomic) features.
 
