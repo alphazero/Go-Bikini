@@ -36,16 +36,21 @@ type mutatorTask func(*clb, int, int, chan string)
 var iters int = 1000 * 1000 * 100
 var option = struct {
 	iters, acnt, scnt int
+	quiet             bool
 }{
 	iters: 1000 * 1000 * 10,
 	acnt:  1,
 	scnt:  1,
+	quiet: false,
 }
+
+var emitter emitFn = emit
 
 func init() {
 	flag.IntVar(&option.iters, "n", option.iters, "number of mutator access ops")
 	flag.IntVar(&option.acnt, "a", option.acnt, "number of counter + workers")
 	flag.IntVar(&option.scnt, "s", option.scnt, "number of counter - workers")
+	flag.BoolVar(&option.quiet, "quiet", option.quiet, "supress individual worker reports")
 }
 
 func main() {
@@ -54,6 +59,9 @@ func main() {
 
 	flag.Parse()
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	if option.quiet {
+		emitter = quiet
+	}
 	run(option.iters, option.acnt, option.scnt)
 }
 
@@ -114,7 +122,7 @@ func clbAccess(id string, iters int, tasks ...mutatorTask) int64 {
 
 	var acks int
 	for acks < wcnt {
-		fmt.Printf("ack (%s)\n", <-done)
+		emitter("ack (%s)\n", <-done)
 		acks++
 	}
 	delta = time.Now().UnixNano() - start0
@@ -188,3 +196,12 @@ func CASSubtracter(p *clb, idx, n int, done chan string) {
 	}
 	done <- fmt.Sprintf("CASSubtractrer     (%d)", tries)
 }
+
+/// helpers ////////////////////////////////////////////
+
+type emitFn func(string, ...interface{})
+
+func emit(fmtstr string, args ...interface{}) {
+	fmt.Printf(fmtstr, args...)
+}
+func quiet(fmtstr string, args ...interface{}) {}
