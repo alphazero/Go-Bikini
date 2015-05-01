@@ -34,9 +34,18 @@ type mutatorTask func(*clb, int, int, chan string)
 /// basic setup and main boiler plate ////////////////////////////
 
 var iters int = 1000 * 1000 * 100
+var option = struct {
+	iters, acnt, scnt int
+}{
+	iters: 1000 * 1000 * 10,
+	acnt:  1,
+	scnt:  1,
+}
 
 func init() {
-	flag.IntVar(&iters, "n", iters, "number of mutator access ops")
+	flag.IntVar(&option.iters, "n", option.iters, "number of mutator access ops")
+	flag.IntVar(&option.acnt, "a", option.acnt, "number of counter + workers")
+	flag.IntVar(&option.scnt, "s", option.scnt, "number of counter - workers")
 }
 
 func main() {
@@ -45,12 +54,27 @@ func main() {
 
 	flag.Parse()
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	run(iters)
+	run(option.iters, option.acnt, option.scnt)
 }
 
-func run(iters int) {
-	casDelta := clbAccess("access-with-CAS", iters, CASAdder, CASSubtracter)
-	atomicDelta := clbAccess("access-with-Atomic", iters, AtomicAdder, AtomicSubtracter)
+func tasks(acnt int, addt mutatorTask, scnt int, subt mutatorTask) []mutatorTask {
+	tasks := make([]mutatorTask, acnt+scnt)
+	var idx = 0
+	for i := 0; i < acnt; i++ {
+		tasks[idx] = addt
+		idx++
+	}
+	for i := 0; i < scnt; i++ {
+		tasks[idx] = subt
+		idx++
+	}
+	return tasks
+}
+
+func run(iters, acnt, scnt int) {
+
+	casDelta := clbAccess("access-with-CAS", iters, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
+	atomicDelta := clbAccess("access-with-Atomic", iters, tasks(acnt, AtomicAdder, scnt, AtomicSubtracter)...)
 
 	var diff int64
 	var info = ""
@@ -81,7 +105,7 @@ func clbAccess(id string, iters int, tasks ...mutatorTask) int64 {
 	done := make(chan string, wcnt)
 	var v clb
 
-	v.data[0] = 1 // help out the subtracter
+	//	v.data[0] = 1 // help out the subtracter
 	// begin
 	start0 := time.Now().UnixNano()
 	for _, task := range tasks {
