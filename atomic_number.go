@@ -17,20 +17,23 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
 )
 
-// REVU: TODO: try various flavors of vars.
-
 // processer cache-line sized structure
 type clb struct {
 	data [8]uint64
 }
+
 type report struct {
 	name  string
 	delta int64
+}
+type deltas struct {
+	reported, observed int64
 }
 
 type mutatorTask func(*clb, int, int, chan *report)
@@ -41,11 +44,13 @@ var iters int = 1000 * 1000 * 100
 var option = struct {
 	iters, acnt, scnt int
 	quiet             bool
+	load              bool
 }{
 	iters: 1000 * 1000 * 10,
 	acnt:  1,
 	scnt:  1,
 	quiet: false,
+	load:  false,
 }
 
 var emitter emitFn = emit
@@ -55,6 +60,7 @@ func init() {
 	flag.IntVar(&option.acnt, "a", option.acnt, "number of counter + workers")
 	flag.IntVar(&option.scnt, "s", option.scnt, "number of counter - workers")
 	flag.BoolVar(&option.quiet, "quiet", option.quiet, "supress individual worker reports")
+	flag.BoolVar(&option.load, "cpu-load", option.load, "simulate additional orthogonal load")
 }
 
 func main() {
@@ -62,22 +68,27 @@ func main() {
 	fmt.Printf("comparative test of concurrent counter mutators using explicit CAS and atomic Addders\n")
 
 	flag.Parse()
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	if option.quiet {
 		emitter = quiet
 	}
+	if option.load {
+		simulateLoad()
+		fmt.Printf("with simulated cpu-load")
+	}
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	run(option.iters, option.acnt, option.scnt)
 }
 
 func tasks(acnt int, addt mutatorTask, scnt int, subt mutatorTask) []mutatorTask {
 	tasks := make([]mutatorTask, acnt+scnt)
 	var idx = 0
-	for i := 0; i < acnt; i++ {
-		tasks[idx] = addt
-		idx++
-	}
 	for i := 0; i < scnt; i++ {
 		tasks[idx] = subt
+		idx++
+	}
+	for i := 0; i < acnt; i++ {
+		tasks[idx] = addt
 		idx++
 	}
 	return tasks
@@ -85,9 +96,15 @@ func tasks(acnt int, addt mutatorTask, scnt int, subt mutatorTask) []mutatorTask
 
 func run(iters, acnt, scnt int) {
 
-	atomicDelta := clbAccess("access-with-Atomic", iters, tasks(acnt, AtomicAdder, scnt, AtomicSubtracter)...)
-	casDelta := clbAccess("access-with-CAS", iters, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
+	casDeltas := runTest("access-with-CAS", iters, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
+	atomicDeltas := runTest("access-with-Atomic", iters, tasks(acnt, AtomicAdder, scnt, AtomicSubtracter)...)
 
+	fmt.Println("\n---------------------")
+	displayResults("reported", casDeltas.reported, atomicDeltas.reported)
+	displayResults("observed", casDeltas.observed, atomicDeltas.observed)
+}
+
+func displayResults(result string, casDelta, atomicDelta int64) {
 	var diff int64
 	var info = ""
 	switch casDelta < atomicDelta {
@@ -98,20 +115,17 @@ func run(iters, acnt, scnt int) {
 		diff = casDelta - atomicDelta
 		info = "Atomic"
 	}
-
 	perMOP := diff / int64(iters)
-	fmt.Println("\n ------------------------------")
-	fmt.Printf("report: %s access faster by %d nsecs (%d nsec/mutation-op)\n", info, diff, perMOP)
+	fmt.Printf("%s: %6s access faster by %d nsecs (%d nsec/mutation-op)\n", result, info, diff, perMOP)
 }
 
-func clbAccess(id string, iters int, tasks ...mutatorTask) int64 {
-	fmt.Printf("\n--- %s\n", id)
+func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
+	emitter("\n--- %s\n", id)
 
-	var delta int64
 	var wcnt = len(tasks)
 	if wcnt == 0 {
-		fmt.Printf("NOP %s with no tasks provided\n")
-		return delta
+		emitter("NOP %s with no tasks provided\n", id)
+		return nil
 	}
 
 	done := make(chan *report, wcnt)
@@ -136,10 +150,9 @@ func clbAccess(id string, iters int, tasks ...mutatorTask) int64 {
 	close(done)
 	// end
 
-	fmt.Printf("\n\tdelta:[reported:% 10d observed:% 10d] [%s]\n", dt, dt_observed, id)
+	emitter("\n\tdelta:[reported:% 12d observed:% 12d] [%s]\n", dt, dt_observed, id)
 
-	// return reported delta avg.
-	return dt // REVU: TODO: report both
+	return &deltas{dt, dt_observed}
 }
 
 /// using atomic adders ////////////////////////////////////
@@ -153,12 +166,11 @@ func AtomicAdder(p *clb, idx, n int, done chan *report) {
 	delta := time.Now().UnixNano() - start
 	done <- &report{"AtomicAdder", delta}
 }
+
 func AtomicSubtracter(p *clb, idx, n int, done chan *report) {
 	ptr := &(p.data[idx])
 
 	start := time.Now().UnixNano()
-	for atomic.LoadUint64(ptr) == 0 {
-	}
 	for i := 0; i < n; i++ {
 		atomic.AddUint64(ptr, ^uint64(0))
 	}
@@ -190,8 +202,6 @@ func CASSubtracter(p *clb, idx, n int, done chan *report) {
 	ptr := &(p.data[idx])
 
 	start := time.Now().UnixNano()
-	for atomic.LoadUint64(ptr) == 0 {
-	}
 	for i := 0; i < n; i++ {
 		for {
 			v0 := atomic.LoadUint64(ptr)
@@ -211,6 +221,19 @@ func CASSubtracter(p *clb, idx, n int, done chan *report) {
 type emitFn func(string, ...interface{})
 
 func emit(fmtstr string, args ...interface{}) {
-	fmt.Printf(fmtstr, args...)
+	fmt.Fprintf(os.Stderr, fmtstr, args...)
 }
+
 func quiet(fmtstr string, args ...interface{}) {}
+
+func simulateLoad() {
+	dwcnt := runtime.NumCPU()
+	loadvars := make([]int64, dwcnt)
+	for dw := 0; dw < dwcnt; dw++ {
+		go func(idx int) {
+			for {
+				loadvars[idx] += time.Now().UnixNano()
+			}
+		}(dw)
+	}
+}
