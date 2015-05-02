@@ -120,11 +120,11 @@ func displayResults(result string, casDelta, atomicDelta int64) {
 }
 
 func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
-	emitter("\n--- %s\n", id)
+	fmt.Printf("\n--- %s\n", id)
 
 	var wcnt = len(tasks)
 	if wcnt == 0 {
-		emitter("NOP %s with no tasks provided\n", id)
+		fmt.Printf("NOP %s with no tasks provided\n", id)
 		return nil
 	}
 
@@ -150,7 +150,7 @@ func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
 	close(done)
 	// end
 
-	emitter("\n\tdelta:[reported:% 12d observed:% 12d] [%s]\n", dt, dt_observed, id)
+	fmt.Printf("\n\tdelta:[reported:% 12d observed:% 12d] [%s]\n", dt, dt_observed, id)
 
 	return &deltas{dt, dt_observed}
 }
