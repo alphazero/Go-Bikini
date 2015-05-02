@@ -42,13 +42,14 @@ type mutatorTask func(*clb, int, int, chan *report)
 
 var iters int = 1000 * 1000 * 100
 var option = struct {
-	iters, acnt, scnt int
-	quiet             bool
-	load              bool
+	iters, acnt, scnt, qlen int
+	quiet                   bool
+	load                    bool
 }{
 	iters: 1000 * 1000 * 10,
 	acnt:  1,
 	scnt:  1,
+	qlen:  0,
 	quiet: false,
 	load:  false,
 }
@@ -59,6 +60,7 @@ func init() {
 	flag.IntVar(&option.iters, "n", option.iters, "number of mutator access ops")
 	flag.IntVar(&option.acnt, "a", option.acnt, "number of counter + workers")
 	flag.IntVar(&option.scnt, "s", option.scnt, "number of counter - workers")
+	flag.IntVar(&option.qlen, "q", option.qlen, "chan len - defval 0 means eq. to number of workers")
 	flag.BoolVar(&option.quiet, "quiet", option.quiet, "supress individual worker reports")
 	flag.BoolVar(&option.load, "cpu-load", option.load, "simulate additional orthogonal load")
 }
@@ -73,11 +75,16 @@ func main() {
 	}
 	if option.load {
 		simulateLoad()
-		fmt.Printf("with simulated cpu-load")
+		fmt.Printf("with simulated cpu-load\n")
 	}
+	var qlen = option.qlen
+	if qlen == 0 {
+		qlen = option.acnt + option.scnt
+	}
+	fmt.Printf("with channel len %d\n", qlen)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	run(option.iters, option.acnt, option.scnt)
+	run(option.iters, option.acnt, option.scnt, qlen)
 }
 
 func tasks(acnt int, addt mutatorTask, scnt int, subt mutatorTask) []mutatorTask {
@@ -94,10 +101,10 @@ func tasks(acnt int, addt mutatorTask, scnt int, subt mutatorTask) []mutatorTask
 	return tasks
 }
 
-func run(iters, acnt, scnt int) {
+func run(iters, acnt, scnt, qlen int) {
 
-	casDeltas := runTest("access-with-CAS", iters, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
-	atomicDeltas := runTest("access-with-Atomic", iters, tasks(acnt, AtomicAdder, scnt, AtomicSubtracter)...)
+	casDeltas := runTest("access-with-CAS", iters, qlen, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
+	atomicDeltas := runTest("access-with-Atomic", iters, qlen, tasks(acnt, AtomicAdder, scnt, AtomicSubtracter)...)
 
 	fmt.Println("\n---------------------")
 	displayResults("reported", casDeltas.reported, atomicDeltas.reported)
@@ -119,8 +126,8 @@ func displayResults(result string, casDelta, atomicDelta int64) {
 	fmt.Printf("%s: %6s access faster by % 10d nsecs (%d nsec/mutation-op)\n", result, info, diff, perMOP)
 }
 
-func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
-	fmt.Printf("\n--- %s\n", id)
+func runTest(id string, iters, qlen int, tasks ...mutatorTask) *deltas {
+	fmt.Printf("--- %s\n", id)
 
 	var wcnt = len(tasks)
 	if wcnt == 0 {
@@ -128,7 +135,7 @@ func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
 		return nil
 	}
 
-	done := make(chan *report, wcnt)
+	done := make(chan *report, qlen)
 	var v clb
 
 	// begin
