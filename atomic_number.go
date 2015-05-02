@@ -28,8 +28,12 @@ import (
 type clb struct {
 	data [8]uint64
 }
+type report struct {
+	name  string
+	delta int64
+}
 
-type mutatorTask func(*clb, int, int, chan string)
+type mutatorTask func(*clb, int, int, chan *report)
 
 /// basic setup and main boiler plate ////////////////////////////
 
@@ -81,8 +85,8 @@ func tasks(acnt int, addt mutatorTask, scnt int, subt mutatorTask) []mutatorTask
 
 func run(iters, acnt, scnt int) {
 
-	casDelta := clbAccess("access-with-CAS", iters, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
 	atomicDelta := clbAccess("access-with-Atomic", iters, tasks(acnt, AtomicAdder, scnt, AtomicSubtracter)...)
+	casDelta := clbAccess("access-with-CAS", iters, tasks(acnt, CASAdder, scnt, CASSubtracter)...)
 
 	var diff int64
 	var info = ""
@@ -110,10 +114,9 @@ func clbAccess(id string, iters int, tasks ...mutatorTask) int64 {
 		return delta
 	}
 
-	done := make(chan string, wcnt)
+	done := make(chan *report, wcnt)
 	var v clb
 
-	//	v.data[0] = 1 // help out the subtracter
 	// begin
 	start0 := time.Now().UnixNano()
 	for _, task := range tasks {
@@ -121,51 +124,56 @@ func clbAccess(id string, iters int, tasks ...mutatorTask) int64 {
 	}
 
 	var acks int
+	var deltaZ int64
 	for acks < wcnt {
-		emitter("ack (%s)\n", <-done)
+		rpt := <-done
+		emitter("ack (% 12d ns/access %s)\n", rpt.delta, rpt.name)
 		acks++
+		deltaZ += rpt.delta
 	}
-	delta = time.Now().UnixNano() - start0
+	dt_observed := time.Now().UnixNano() - start0
+	dt := deltaZ / int64(wcnt)
 	close(done)
 	// end
 
-	fmt.Printf("\n\tdelta: %d v.data[0]:%d [%s]\n", delta, v.data[0], id)
+	fmt.Printf("\n\tdelta:[reported:% 10d observed:% 10d] [%s]\n", dt, dt_observed, id)
 
-	return delta
+	// return reported delta avg.
+	return dt // REVU: TODO: report both
 }
 
 /// using atomic adders ////////////////////////////////////
 
-func AtomicAdder(p *clb, idx, n int, done chan string) {
+func AtomicAdder(p *clb, idx, n int, done chan *report) {
 	ptr := &(p.data[idx])
-	tries := 0
+	start := time.Now().UnixNano()
 	for i := 0; i < n; i++ {
 		atomic.AddUint64(ptr, uint64(1))
-		//		tries++ // unneessary ; keeping timings measures ~ fair
 	}
-	done <- fmt.Sprintf("AtomicAdder        (%d)", tries)
+	delta := time.Now().UnixNano() - start
+	done <- &report{"AtomicAdder", delta}
 }
-func AtomicSubtracter(p *clb, idx, n int, done chan string) {
+func AtomicSubtracter(p *clb, idx, n int, done chan *report) {
 	ptr := &(p.data[idx])
-	tries := 0
 
+	start := time.Now().UnixNano()
 	for atomic.LoadUint64(ptr) == 0 {
 	}
 	for i := 0; i < n; i++ {
 		atomic.AddUint64(ptr, ^uint64(0))
-		//		tries++ // unneessary ; keeping timings measures ~ fair
 	}
-	done <- fmt.Sprintf("AtomicSubtracter   (%d)", tries)
+	delta := time.Now().UnixNano() - start
+	done <- &report{"AtomicSubtracter", delta}
 }
 
 /// using atomic CAS /////////////////////////////////////
 
-func CASAdder(p *clb, idx, n int, done chan string) {
+func CASAdder(p *clb, idx, n int, done chan *report) {
 	ptr := &(p.data[idx])
-	tries := 0
+
+	start := time.Now().UnixNano()
 	for i := 0; i < n; i++ {
 		for {
-			//			tries++
 			v0 := atomic.LoadUint64(ptr)
 			v := v0 + 1
 			if atomic.CompareAndSwapUint64(ptr, v0, v) {
@@ -174,18 +182,18 @@ func CASAdder(p *clb, idx, n int, done chan string) {
 			runtime.Gosched()
 		}
 	}
-	done <- fmt.Sprintf("CASAdder           (%d)", tries)
+	delta := time.Now().UnixNano() - start
+	done <- &report{"CASAdder", delta}
 }
 
-func CASSubtracter(p *clb, idx, n int, done chan string) {
+func CASSubtracter(p *clb, idx, n int, done chan *report) {
 	ptr := &(p.data[idx])
-	tries := 0
 
+	start := time.Now().UnixNano()
 	for atomic.LoadUint64(ptr) == 0 {
 	}
 	for i := 0; i < n; i++ {
 		for {
-			//			tries++
 			v0 := atomic.LoadUint64(ptr)
 			v := v0 - 1
 			if atomic.CompareAndSwapUint64(ptr, v0, v) {
@@ -194,7 +202,8 @@ func CASSubtracter(p *clb, idx, n int, done chan string) {
 			runtime.Gosched()
 		}
 	}
-	done <- fmt.Sprintf("CASSubtractrer     (%d)", tries)
+	delta := time.Now().UnixNano() - start
+	done <- &report{"CASSubtracter", delta}
 }
 
 /// helpers ////////////////////////////////////////////
