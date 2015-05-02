@@ -116,7 +116,7 @@ func displayResults(result string, casDelta, atomicDelta int64) {
 		info = "Atomic"
 	}
 	perMOP := diff / int64(iters)
-	fmt.Printf("%s: %6s access faster by %d nsecs (%d nsec/mutation-op)\n", result, info, diff, perMOP)
+	fmt.Printf("%s: %6s access faster by % 10d nsecs (%d nsec/mutation-op)\n", result, info, diff, perMOP)
 }
 
 func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
@@ -147,10 +147,12 @@ func runTest(id string, iters int, tasks ...mutatorTask) *deltas {
 	}
 	dt_observed := time.Now().UnixNano() - start0
 	dt := deltaZ / int64(wcnt)
+	e2e_oh := dt_observed - dt // end-to-end overhead
+	e2e_ohratio := float64(e2e_oh*100) / float64(dt_observed)
 	close(done)
 	// end
 
-	fmt.Printf("\n\tdelta:[reported:% 12d observed:% 12d] [%s]\n", dt, dt_observed, id)
+	fmt.Printf("\n\tdelta:[reported:% 12d observed:% 12d] e2e-overhead:[%d (nsec) %.3f (%%)] [%s]\n", dt, dt_observed, e2e_oh, e2e_ohratio, id)
 
 	return &deltas{dt, dt_observed}
 }
