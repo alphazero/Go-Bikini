@@ -141,7 +141,7 @@ func AtomicAdder(p *clb, idx, n int, done chan string) {
 	tries := 0
 	for i := 0; i < n; i++ {
 		atomic.AddUint64(ptr, uint64(1))
-		tries++ // unneessary ; keeping timings measures ~ fair
+		//		tries++ // unneessary ; keeping timings measures ~ fair
 	}
 	done <- fmt.Sprintf("AtomicAdder        (%d)", tries)
 }
@@ -153,7 +153,7 @@ func AtomicSubtracter(p *clb, idx, n int, done chan string) {
 	}
 	for i := 0; i < n; i++ {
 		atomic.AddUint64(ptr, ^uint64(0))
-		tries++ // unneessary ; keeping timings measures ~ fair
+		//		tries++ // unneessary ; keeping timings measures ~ fair
 	}
 	done <- fmt.Sprintf("AtomicSubtracter   (%d)", tries)
 }
@@ -165,7 +165,7 @@ func CASAdder(p *clb, idx, n int, done chan string) {
 	tries := 0
 	for i := 0; i < n; i++ {
 		for {
-			tries++
+			//			tries++
 			v0 := atomic.LoadUint64(ptr)
 			v := v0 + 1
 			if atomic.CompareAndSwapUint64(ptr, v0, v) {
@@ -185,7 +185,7 @@ func CASSubtracter(p *clb, idx, n int, done chan string) {
 	}
 	for i := 0; i < n; i++ {
 		for {
-			tries++
+			//			tries++
 			v0 := atomic.LoadUint64(ptr)
 			v := v0 - 1
 			if atomic.CompareAndSwapUint64(ptr, v0, v) {
