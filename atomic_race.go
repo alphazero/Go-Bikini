@@ -70,6 +70,9 @@ func TestCASLock() {
 	fmt.Println("TestCASLock - done")
 }
 
+// Fragment from another project that indicated the problem.
+// There is a bit of noise here but issue can apparently be
+// reproduced with slight mod to golang test code.
 func (clb *cline) put(key, value uint64) (removed bool, k0 uint64, idx uint8) {
 	if key == 0 {
 		panic("ERR - key is nil")
